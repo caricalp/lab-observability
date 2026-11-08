@@ -1,0 +1,73 @@
+site_name: Lab Cloud — Knowledge Base
+site_description: Documentação Técnica de Engenharia, Observabilidade e Infraestrutura do Lab Cloud
+site_author: Equipe Lab Cloud
+repo_name: lab-cloud
+repo_url: https://github.com/caricalp/lab-cloud
+
+theme:
+  name: material
+  language: pt-BR
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Mudar para modo escuro
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Mudar para modo claro
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Início: index.md
+  - Arquitetura:
+      - Visão Geral: architecture/overview.md
+      - Topologia de Rede & Portas: architecture/network-topology.md
+  - Observabilidade & Monitoramento:
+      - Tracing & Análise APM: observability/distributed-tracing.md
+      - Métricas (Prometheus): observability/metrics.md
+      - Logs Estruturados (Loki): observability/logs.md
+      - Infraestrutura (Zabbix 7): observability/zabbix.md
+      - Visualização (Grafana): observability/dashboards.md
+  - Aplicação & Carga:
+      - API Python Instrumentada: application/api-implementation.md
+      - Gerador Contínuo de Tráfego: application/traffic-generator.md
+  - Base de Dados & Gestão:
+      - PostgreSQL & pgAdmin 4: database/postgresql-pgadmin.md
+  - Troubleshooting & Runbooks:
+      - Guia de Resolução de Incidentes: troubleshooting/runbook.md
+  - Referência Técnica:
+      - Comandos & Cheatsheet: reference/commands.md
