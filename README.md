@@ -17,7 +17,7 @@ Este ambiente foi projetado para operar uma stack completa de observabilidade lo
 | **pgAdmin 4** | `dpage/pgadmin4:latest` | Gestão visual de schemas, tabelas e queries SQL | `5050` | 
 | **Custom API** | Python 3.11 / Flask | API de microsserviço instrumentada com métricas | `5000` | 
 | **Traffic Generator** | Python 3.11 / Requests | Worker contínuo de simulação de carga e spikes | Interna | 
-
+| **k6** | scripts.js | Worker contínuo de simulação de carga e spikes | Interna |
 ## 📂 Estrutura Modular do Projeto
 
 ```
@@ -38,13 +38,21 @@ lab-observability/
 │   ├── requirements.txt            # Dependência Requests
 │   └── load_worker.py              # Loop de carga com injeção programada de spikes
 └── docs/                           # Documentação completa em Markdown para MkDocs
-    ├── index.md
-    ├── architecture/
-    ├── observability/
-    ├── application/
-    ├── database/
-    ├── troubleshooting/
-    └── reference/
+│    ├── index.md
+│    ├── architecture/
+│    ├── observability/
+│    ├── application/
+│    ├── database/
+│    ├── troubleshooting/
+│    └── reference/
+│
+└── K6/                            # Script de carga com múltiplos estágios estressando /api/pedidos, /api/erro-404 e /api/erro-500.
+     ├── scripts.js/
+     ├── /api/pedidos/
+     ├── /api/erro-404/
+     ├── /api/erro-500/
+
+
 
 ```
 
