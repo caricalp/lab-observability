@@ -49,7 +49,7 @@ lab-observability/
      ├── scripts.js/
      ├── /api/pedidos/
      ├── /api/erro-404/
-     ├── /api/erro-500/
+     └── /api/erro-500/
 
 
 
