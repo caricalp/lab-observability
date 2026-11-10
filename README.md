@@ -1,4 +1,4 @@
-# Lab Cloud — Observability & Infrastructure Knowledge Base
+# Lab — Observability & Infrastructure Knowledge Base
 
 Repositório técnico oficial contendo a arquitetura, configurações como código, aplicações instrumentadas e runbooks de observabilidade do ambiente **Lab Cloud**.
 
@@ -21,7 +21,7 @@ Este ambiente foi projetado para operar uma stack completa de observabilidade lo
 ## 📂 Estrutura Modular do Projeto
 
 ```
-lab-cloud/
+lab-observability/
 ├── docker-compose.yml              # Orquestração de todos os 8 containers
 ├── mkdocs.yml                      # Especificação do portal Material for MkDocs
 ├── README.md                       # Apresentação do projeto
