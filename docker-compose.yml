@@ -1,9 +1,9 @@
-version: '3.8'
-
+# Rede isolada tipo bridge para comunicação interna entre containers por nome
 networks:
   lab-net:
     driver: bridge
 
+# Volumes persistentes para retenção de dados
 volumes:
   pg_data:
   zabbix_snmp:
@@ -14,7 +14,7 @@ volumes:
 
 services:
   # -------------------------------------------------------------------------
-  # 1. POSTGRESQL (Base Relacional do Zabbix e da Aplicação)
+  # 1. POSTGRESQL (Base de dados para Zabbix e API Flask)
   # -------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: zabbix
-      POSTGRES_PASSWORD: zabbix_password
+      POSTGRES_PASSWORD: '@Carica98'
       POSTGRES_DB: zabbix
     volumes:
       - pg_data:/var/lib/postgresql/data
@@ -32,7 +32,7 @@ services:
       - "5432:5432"
 
   # -------------------------------------------------------------------------
-  # 2. ZABBIX SERVER & WEB (Monitoramento de Infraestrutura)
+  # 2. ZABBIX SERVER & WEB
   # -------------------------------------------------------------------------
   zabbix-server:
     image: zabbix/zabbix-server-pgsql:alpine-7.0-latest
@@ -43,7 +43,7 @@ services:
     environment:
       DB_SERVER_HOST: postgres
       POSTGRES_USER: zabbix
-      POSTGRES_PASSWORD: zabbix_password
+      POSTGRES_PASSWORD: '@Carica98'
       POSTGRES_DB: zabbix
     volumes:
       - zabbix_snmp:/var/lib/zabbix/snmptraps
@@ -62,7 +62,7 @@ services:
       ZBX_SERVER_HOST: zabbix-server
       DB_SERVER_HOST: postgres
       POSTGRES_USER: zabbix
-      POSTGRES_PASSWORD: zabbix_password
+      POSTGRES_PASSWORD: '@Carica98'
       POSTGRES_DB: zabbix
     networks:
       - lab-net
@@ -70,7 +70,7 @@ services:
       - "8080:8080"
 
   # -------------------------------------------------------------------------
-  # 3. PROMETHEUS (TSDB para Métricas de Aplicação)
+  # 3. PROMETHEUS (TSDB para métricas numéricas)
   # -------------------------------------------------------------------------
   prometheus:
     image: prom/prometheus:latest
@@ -89,7 +89,7 @@ services:
       - "9090:9090"
 
   # -------------------------------------------------------------------------
-  # 4. LOKI (Ingestão e Agregação de Logs Estruturados)
+  # 4. LOKI (Ingestão de logs)
   # -------------------------------------------------------------------------
   loki:
     image: grafana/loki:latest
@@ -105,7 +105,7 @@ services:
       - "3100:3100"
 
   # -------------------------------------------------------------------------
-  # 5. GRAFANA OSS COM PLUGIN ZABBIX
+  # 5. GRAFANA COM PLUGIN ZABBIX
   # -------------------------------------------------------------------------
   grafana:
     image: grafana/grafana-oss:latest
@@ -123,7 +123,46 @@ services:
       - "3000:3000"
 
   # -------------------------------------------------------------------------
-  # 6. PGADMIN 4 (Interface Web para Administração do PostgreSQL)
+  # 6. API FLASK INSTRUMENTADA (Rotas /api/pedidos, /api/erro-404, /api/erro-500)
+  #    Com deploy.resources.limits para simular estrangulamento/travamento sob carga
+  # -------------------------------------------------------------------------
+  custom-api:
+    build:
+      context: ./app
+    container_name: lab-api
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: zabbix
+      DB_USER: zabbix
+      DB_PASSWORD: '@Carica98'
+    ports:
+      - "5000:5000"
+    networks:
+      - lab-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 96M
+        reservations:
+          cpus: '0.10'
+          memory: 48M
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://127.0.0.1:3100/loki/api/v1/push"
+        loki-retries: "2"
+        loki-max-backoff: "800ms"
+        loki-timeout: "1s"
+        labels: "job"
+        loki-external-labels: "job=custom-api,env=lab"
+
+  # -------------------------------------------------------------------------
+  # 7. PGADMIN 4 (Web UI para PostgreSQL)
   # -------------------------------------------------------------------------
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -140,29 +179,24 @@ services:
       - "5050:80"
 
   # -------------------------------------------------------------------------
-  # 7. CUSTOM API (Aplicação Instrumentada)
+  # 8. K6 (Serviço de Teste de Carga e Estresse apontando pros endpoints Flask)
   # -------------------------------------------------------------------------
-  custom-api:
-    build:
-      context: ./app
-    container_name: lab-api
+  k6:
+    image: grafana/k6:latest
+    container_name: lab-k6
     restart: unless-stopped
-    ports:
-      - "5000:5000"
+    depends_on:
+      - custom-api
+    environment:
+      TARGET_URL: "http://custom-api:5000"
+    volumes:
+      - ./k6:/scripts:ro
+    command: run /scripts/script.js
     networks:
       - lab-net
-    logging:
-      driver: loki
-      options:
-        loki-url: "http://127.0.0.1:3100/loki/api/v1/push"
-        loki-retries: "2"
-        loki-max-backoff: "800ms"
-        loki-timeout: "1s"
-        labels: "job"
-        loki-external-labels: "job=custom-api,env=lab"
 
   # -------------------------------------------------------------------------
-  # 8. TRAFFIC GENERATOR (Worker Contínuo de Carga e Spikes)
+  # 9. WORKER GERADOR DE TRÁFEGO CONTÍNUO (Background)
   # -------------------------------------------------------------------------
   traffic-generator:
     build:
