@@ -45,7 +45,6 @@ lab-observability/
 │    ├── database/
 │    ├── troubleshooting/
 │    └── reference/
-│
 └── K6/                            # Script de carga com múltiplos estágios estressando /api/pedidos, /api/erro-404 e /api/erro-500.
      ├── scripts.js/
      ├── /api/pedidos/
