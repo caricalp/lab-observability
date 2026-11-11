@@ -1,0 +1,116 @@
+// ============================================================================
+// Grafana Alloy - Configuração de Envio para o Grafana Cloud
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// 1. MÉTRICAS (PROMETHEUS)
+// ----------------------------------------------------------------------------
+
+prometheus.remote_write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_API_TOKEN")
+    }
+  }
+}
+
+// Scrape da Custom API Flask (/metrics)
+prometheus.scrape "custom_api" {
+  targets = [
+    {
+      "__address__" = "custom-api:5000",
+      "job"         = "custom-api",
+      "env"         = "lab",
+    },
+  ]
+  forward_to = [prometheus.remote_write.cloud.receiver]
+  scrape_interval = "15s"
+}
+
+// Scrape do próprio Prometheus local (métricas agregadas)
+prometheus.scrape "local_prometheus" {
+  targets = [
+    {
+      "__address__" = "prometheus:9090",
+      "job"         = "prometheus",
+      "env"         = "lab",
+    },
+  ]
+  forward_to = [prometheus.remote_write.cloud.receiver]
+  scrape_interval = "30s"
+}
+
+// ----------------------------------------------------------------------------
+// 2. LOGS (LOKI)
+// ----------------------------------------------------------------------------
+
+loki.write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_LOKI_USER")
+      password = sys.env("GRAFANA_CLOUD_API_TOKEN")
+    }
+  }
+}
+
+// Coleta de logs dos containers Docker locais
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["container"]
+    target_label  = "job"
+  }
+}
+
+loki.source.docker "docker_logs" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.docker_logs.output
+  forward_to = [loki.write.cloud.receiver]
+}
+
+// ----------------------------------------------------------------------------
+// 3. TRACES (TEMPO)
+// ----------------------------------------------------------------------------
+
+otelcol.exporter.otlphttp "tempo_cloud" {
+  client {
+    endpoint = sys.env("GRAFANA_CLOUD_TEMPO_URL")
+
+    auth = otelcol.auth.basic.tempo.handler
+  }
+}
+
+otelcol.auth.basic "tempo" {
+  username = sys.env("GRAFANA_CLOUD_TEMPO_USER")
+  password = sys.env("GRAFANA_CLOUD_API_TOKEN")
+}
+
+// Receptor OTLP no Alloy (portas padrão 4317 gRPC e 4318 HTTP)
+otelcol.receiver.otlp "default" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  output {
+    traces = [otelcol.exporter.otlphttp.tempo_cloud.input]
+  }
+}
