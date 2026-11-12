@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-flask
+  namespace: applications
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-flask
+  template:
+    metadata:
+      labels:
+        app: api-flask
+    spec:
+      containers:
+        - name: api-flask
+          image: local/api-flask:latest
+          imagePullPolicy: Never
+          env:
+            - name: DB_HOST
+              value: "postgresql.database.svc.cluster.local"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: "zabbix"
+            - name: DB_USER
+              value: "zabbix"
+            - name: DB_PASSWORD
+              value: "@Carica98"
+          ports:
+            - containerPort: 5000
+              name: http
+          resources:
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-flask
+  namespace: applications
+spec:
+  type: NodePort
+  selector:
+    app: api-flask
+  ports:
+    - port: 5000
+      targetPort: 5000
+      nodePort: 30500
+      name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-coleta
+  namespace: applications
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-coleta
+  template:
+    metadata:
+      labels:
+        app: api-coleta
+    spec:
+      containers:
+        - name: akamai-exporter
+          image: local/akamai-exporter:latest
+          imagePullPolicy: Never
+          env:
+            - name: MOCK_URL
+              value: "http://mock-akamai.simulations.svc.cluster.local:8080"
+            - name: EDGERC_PATH
+              value: "/etc/akamai/.edgerc"
+            - name: PORTA_EXPORTER
+              value: "9110"
+          ports:
+            - containerPort: 9110
+              name: metrics
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-coleta
+  namespace: applications
+spec:
+  type: NodePort
+  selector:
+    app: api-coleta
+  ports:
+    - port: 9110
+      targetPort: 9110
+      nodePort: 30911
+      name: metrics

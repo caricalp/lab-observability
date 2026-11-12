@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-akamai
+  namespace: simulations
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-akamai
+  template:
+    metadata:
+      labels:
+        app: mock-akamai
+    spec:
+      containers:
+        - name: mock-akamai
+          image: local/mock-akamai:latest
+          imagePullPolicy: Never
+          env:
+            - name: MOCK_QTD_CPCODES
+              value: "3"
+          ports:
+            - containerPort: 8080
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-akamai
+  namespace: simulations
+spec:
+  selector:
+    app: mock-akamai
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-m365
+  namespace: simulations
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-m365
+  template:
+    metadata:
+      labels:
+        app: mock-m365
+    spec:
+      containers:
+        - name: mock-m365
+          image: local/mock-m365:latest
+          imagePullPolicy: Never
+          env:
+            - name: MOCK_TENANT_ID
+              value: "tenant-de-teste"
+            - name: MOCK_CLIENT_ID
+              value: "client-de-teste"
+            - name: MOCK_CLIENT_SECRET
+              value: "segredo-de-teste"
+            - name: MOCK_EVENTOS_POR_BLOB
+              value: "5"
+            - name: MOCK_HOST_PUBLICO
+              value: "mock-m365.simulations.svc.cluster.local:8080"
+          ports:
+            - containerPort: 8080
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-m365
+  namespace: simulations
+spec:
+  selector:
+    app: mock-m365
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: custom-api
+  namespace: simulations
+spec:
+  type: ExternalName
+  externalName: api-flask.applications.svc.cluster.local
+  ports:
+    - port: 5000
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-generator
+  namespace: simulations
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traffic-generator
+  template:
+    metadata:
+      labels:
+        app: traffic-generator
+    spec:
+      containers:
+        - name: traffic-generator
+          image: local/traffic-generator:latest
+          imagePullPolicy: Never
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

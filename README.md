@@ -1,83 +1,131 @@
-# Lab Cloud — Observability & Infrastructure Knowledge Base
+# Lab Cloud — Observability & Kubernetes (K3s) Knowledge Base
 
-Repositório técnico oficial contendo a arquitetura, configurações como código, aplicações instrumentadas e runbooks de observabilidade do ambiente **Lab Cloud**.
+Repositório técnico oficial contendo a arquitetura, manifestos Kubernetes (K3s), configurações como código, microsserviços instrumentados, mocks de provedores e pipelines de observabilidade do ambiente **Lab Cloud**.
 
-Este ambiente foi projetado para operar uma stack híbrida e modular de observabilidade: local (*self-hosted*) em **Docker puro** dentro de uma VM Linux com restrição de memória (8 GB RAM), além de integração com **Grafana Cloud** (Métricas, Logs e Traces) via **Grafana Alloy**.
+O ambiente foi unificado e migrado para uma infraestrutura moderna e profissional baseada em **Kubernetes leve (K3s)** rodando sobre uma única VM Linux (Ubuntu Server), integrando observability local (*self-hosted*) e exportação contínua de métricas, logs e traces para o perfil principal do **Grafana Cloud** via **Grafana Alloy**.
 
-## 🚀 Tecnologias Integradas
+---
 
-| Componente | Versão / Imagem | Papel no Ambiente | Porta Exposta | 
-| ----- | ----- | ----- | ----- | 
-| **Grafana OSS** | `grafana/grafana-oss:latest` | Consolidação visual de Métricas, Logs, SQL e Zabbix | `3000` | 
-| **Grafana Alloy** | `grafana/alloy:latest` | Agente unificado para coleta e envio ao Grafana Cloud (Métricas, Logs, Traces) | `12345`, `4317`, `4318` | 
-| **Prometheus** | `prom/prometheus:latest` | Ingestão e consultas PromQL de Golden Signals | `9090` | 
-| **Grafana Loki** | `grafana/loki:latest` | Armazenamento e agregação de logs com LogQL | `3100` | 
-| **Zabbix Server** | `zabbix-server-pgsql:alpine-7.0` | Monitoramento de métricas do sistema operacional | `10051` | 
-| **Zabbix Web** | `zabbix-web-nginx-pgsql:alpine-7.0` | Interface administrativa e API JSON-RPC | `8080` | 
-| **PostgreSQL** | `postgres:16-alpine` | Banco de dados transacional do Zabbix e da API | `5432` | 
-| **pgAdmin 4** | `dpage/pgadmin4:latest` | Gestão visual de schemas, tabelas e queries SQL | `5050` | 
-| **Custom API** | Python 3.11 / Flask | API de microsserviço instrumentada com métricas e rotas de erro (404/500) | `5000` | 
-| **K6** | `grafana/k6:latest` | Testes contínuos de carga e estresse nos endpoints | Interna | 
-| **Traffic Generator** | Python 3.11 / Requests | Worker contínuo de simulação de carga e spikes | Interna | 
+## 🏛️ Arquitetura do Cluster K3s
 
-## 📂 Estrutura Modular do Projeto
-
+```text
+K3S CLUSTER
+│
+└── NODE-01 (Ubuntu Server - 192.168.0.208)
+    │
+    ├── NAMESPACE: monitoring
+    │   ├── Pod: zabbix-server      (Porta 10051 / NodePort 30051)
+    │   ├── Pod: zabbix-web         (Porta 8080 / NodePort 30080)
+    │   ├── Pod: prometheus         (Porta 9090 / NodePort 30090)
+    │   └── Pod: grafana            (Porta 3000 / NodePort 30300)
+    │
+    ├── NAMESPACE: database
+    │   ├── Pod: postgresql         (Porta 5432 - ClusterIP)
+    │   └── Pod: pgadmin            (Porta 80 / NodePort 30550)
+    │
+    ├── NAMESPACE: logging
+    │   └── Pod: loki               (Porta 3100 / NodePort 30100)
+    │
+    ├── NAMESPACE: observability
+    │   └── Pod: grafana-alloy      (Porta 12345 / NodePort 31234 | OTLP 4317/4318)
+    │
+    ├── NAMESPACE: applications
+    │   ├── Pod: api-flask          (Porta 5000 / NodePort 30500)
+    │   └── Pod: api-coleta         (Akamai Exporter - Porta 9110 / NodePort 30911)
+    │
+    └── NAMESPACE: simulations
+        ├── Pod: mock-akamai        (Simulação Akamai - Porta 8080)
+        ├── Pod: mock-m365          (Simulação Microsoft 365 - Porta 8080)
+        └── Pod: traffic-generator  (Worker contínuo de simulação de carga e spikes)
 ```
+
+---
+
+## 🚀 Componentes e Serviços
+
+| Namespace | Pod / Serviço | Imagem | Papel no Ambiente | Acesso / NodePort |
+| :--- | :--- | :--- | :--- | :--- |
+| **monitoring** | `grafana` | `grafana/grafana-oss:latest` | Dashboards centralizados OSS | `http://<IP_HOST>:30300` |
+| **monitoring** | `prometheus` | `prom/prometheus:latest` | Scraping e consultas PromQL | `http://<IP_HOST>:30090` |
+| **monitoring** | `zabbix-web` | `zabbix-web-nginx-pgsql:alpine-7.0` | Frontend web administrativo Zabbix | `http://<IP_HOST>:30080` |
+| **monitoring** | `zabbix-server` | `zabbix-server-pgsql:alpine-7.0` | Servidor de monitoramento Zabbix | `NodePort 30051` |
+| **database** | `postgresql` | `postgres:16-alpine` | DB transacional da API e do Zabbix | Interno (`5432`) |
+| **database** | `pgadmin` | `dpage/pgadmin4:latest` | Interface gráfica para PostgreSQL | `http://<IP_HOST>:30550` |
+| **logging** | `loki` | `grafana/loki:3.0.0` | Coleta e agregação de logs com LogQL | `http://<IP_HOST>:30100` |
+| **observability**| `grafana-alloy`| `grafana/alloy:v1.3.0` | Pipeline de telemetria para Grafana Cloud | `http://<IP_HOST>:31234` |
+| **applications** | `api-flask` | `local/api-flask:latest` | Microsserviço com rotas e métricas | `http://<IP_HOST>:30500` |
+| **applications** | `api-coleta` | `local/akamai-exporter:latest` | Coletor de telemetria Akamai | `http://<IP_HOST>:30911` |
+| **simulations** | `mock-akamai` | `local/mock-akamai:latest` | Mock de CDN & Data Traffic Akamai | ClusterIP interno |
+| **simulations** | `mock-m365` | `local/mock-m365:latest` | Mock de APIs Graph e O365 Audit | ClusterIP interno |
+| **simulations** | `traffic-generator`| `local/traffic-generator:latest` | Gerador contínuo de carga e picos | Worker contínuo |
+
+---
+
+## 📂 Estrutura de Diretórios do Projeto
+
+```text
 lab-cloud/
-├── docker-compose.yml              # Orquestração de todos os containers
-├── mkdocs.yml                      # Especificação do portal Material for MkDocs
-├── README.md                       # Apresentação do projeto
-├── .env.example                    # Template de variáveis de ambiente seguras
-├── alloy/
-│   └── config.alloy                # Pipeline de coleta e exportação para o Grafana Cloud
-├── prometheus/
-│   └── prometheus.yml              # Configuração de scraping e targets
-├── loki/
-│   └── local-config.yaml           # Configuração de chunks e retenção do Loki
-├── app/
-│   ├── Dockerfile                  # Containerização da API
-│   ├── requirements.txt            # Dependências Flask, prometheus_client e psycopg2
-│   └── main.py                     # API REST com instrumentação, banco e rotas de erro
-├── k6/
-│   └── script.js                   # Cenários de teste de carga com múltiplos estágios
-├── traffic-generator/
-│   ├── Dockerfile                  # Containerização do worker
-│   ├── requirements.txt            # Dependência Requests
-│   └── load_worker.py              # Loop de carga com injeção programada de spikes
-└── docs/                           # Documentação completa em Markdown para MkDocs
-    ├── index.md
-    ├── architecture/
-    ├── observability/
-    ├── application/
-    ├── database/
-    ├── troubleshooting/
-    └── reference/
+├── k8s/
+│   ├── 00-namespaces.yaml           # Criação dos 6 namespaces isolados
+│   ├── 01-database.yaml             # PostgreSQL com PVC dedicado e pgAdmin
+│   ├── 02-logging.yaml              # Grafana Loki com PVC e ConfigMap
+│   ├── 03-simulations.yaml          # Mocks Akamai, M365 e Traffic Generator
+│   ├── 04-applications.yaml         # API Flask instrumentada e API Coleta
+│   ├── 05-monitoring.yaml           # Prometheus, Grafana e Zabbix (Server + Web)
+│   └── 06-observability-alloy.yaml  # DaemonSet Grafana Alloy com RBAC para k8s
+├── app/                             # Código-fonte da Custom API Flask
+├── traffic-generator/               # Código-fonte do gerador de carga e spikes
+├── k6/                              # Scripts de teste de carga K6
+└── README.md                        # Documentação da arquitetura e operação
 ```
 
-## ⚡ Inicialização Rápida
+---
 
-1. **Pré-requisitos:** Docker Engine e Docker Compose instalados na máquina/VM Linux.
+## ⚡ Como Implantar e Operar o Cluster
 
-2. **Configuração de Variáveis de Ambiente:**
-   Copie o arquivo de exemplo e defina suas credenciais do Grafana Cloud (tokens e URLs):
-   ```bash
-   cp .env.example .env
-   ```
+### 1. Pré-requisitos
+- Ubuntu Server 22.04 / 24.04 LTS
+- K3s instalado (`curl -sfL https://get.k3s.io | sh -s - --disable traefik`)
+- Containerd e utilitário `kubectl` prontos no host
 
-3. **Instalar o driver Loki do Docker (opcional se usar Loki local):**
-   ```bash
-   docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
-   ```
+### 2. Configuração de Credenciais do Grafana Cloud
+Configure o ConfigMap do Grafana Alloy com suas credenciais seguras do Grafana Cloud (Prometheus, Loki e OTLP):
+- Crie ou edite o arquivo `k8s/06-observability-alloy.yaml` preenchendo os campos `<GRAFANA_CLOUD_USER_ID>` e `<GRAFANA_CLOUD_API_TOKEN>`.
 
-4. **Subir toda a stack:**
-   ```bash
-   docker compose up -d --build
-   ```
+### 3. Aplicação dos Manifestos
+Para subir todo o ecossistema com um único comando:
 
-5. **Validar serviços:**
-   * **Grafana Local:** `http://<IP-DO-HOST>:3000`
-   * **Grafana Alloy UI:** `http://<IP-DO-HOST>:12345`
-   * **Zabbix Web:** `http://<IP-DO-HOST>:8080`
-   * **pgAdmin:** `http://<IP-DO-HOST>:5050`
-   * **Prometheus UI:** `http://<IP-DO-HOST>:9090`
-   * **Custom API:** `http://<IP-DO-HOST>:5000/api/pedidos`
+```bash
+kubectl apply -f k8s/
+```
+
+Verifique se todos os pods estão saudáveis:
+
+```bash
+kubectl get pods -A
+```
+
+---
+
+## 🔍 Endpoints de Teste e Validação
+
+- **API de Pedidos (Flask + PostgreSQL):**
+  ```bash
+  curl http://<IP_HOST>:30500/api/pedidos
+  ```
+- **Métricas Prometheus da Aplicação:**
+  ```bash
+  curl http://<IP_HOST>:30500/metrics
+  ```
+- **Métricas do Akamai Exporter:**
+  ```bash
+  curl http://<IP_HOST>:30911/metrics
+  ```
+- **Painel de Controle do Grafana Alloy:**
+  Acesse `http://<IP_HOST>:31234` para visualizar o grafo de componentes vivos do Alloy.
+
+---
+
+## 🛡️ Boas Práticas e Segurança
+- Nenhum segredo ou credencial sensível é armazenado diretamente em código versionado.
+- Os pods de banco de dados e simulações operam exclusivamente via ClusterIP interno dentro da malha de rede do K3s, expondo apenas as portas estritamente necessárias via NodePort.
