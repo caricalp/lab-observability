@@ -80,9 +80,10 @@ data:
     }
 
     // ------------------------------------------------------------------------
-    // 2. SCRAPES DE METRICAS KUBERNETES
+    // 2. SCRAPING PROMETHEUS
     // ------------------------------------------------------------------------
-    // Aplicações (api-flask)
+
+    // API Flask (Applications)
     prometheus.scrape "api_flask" {
       targets = [
         {
@@ -139,7 +140,57 @@ data:
     }
 
     // ------------------------------------------------------------------------
-    // 3. LOGS DE TODOS OS PODS DO KUBERNETES -> LOKI CLOUD
+    // 3. RECEIVER LOKI PUSH M365 (Office 365 Audit API)
+    // ------------------------------------------------------------------------
+    loki.source.api "m365_api" {
+      http {
+        listen_address = "0.0.0.0"
+        listen_port    = 9999
+      }
+      forward_to = [loki.process.m365_teste.receiver]
+    }
+
+    loki.process "m365_teste" {
+      stage.json {
+        expressions = {
+          operation     = "Operation",
+          workload      = "Workload",
+          result        = "ResultStatus",
+          creation_time = "CreationTime",
+          country       = "Country",
+          latitude      = "Latitude",
+          longitude     = "Longitude",
+        }
+      }
+
+      stage.labels {
+        values = {
+          operation = "",
+          workload  = "",
+          result    = "",
+          country   = "",
+        }
+      }
+
+      stage.timestamp {
+        source   = "creation_time"
+        format   = "2006-01-02T15:04:05"
+        location = "UTC"
+      }
+
+      stage.static_labels {
+        values = {
+          job      = "m365-audit",
+          ambiente = "teste",
+          origem   = "m365-mock",
+        }
+      }
+
+      forward_to = [loki.write.cloud.receiver]
+    }
+
+    // ------------------------------------------------------------------------
+    // 4. LOGS DE TODOS OS PODS DO KUBERNETES -> LOKI CLOUD
     // ------------------------------------------------------------------------
     discovery.kubernetes "pods" {
       role = "pod"
@@ -187,7 +238,7 @@ data:
     }
 
     // ------------------------------------------------------------------------
-    // 4. RECEIVER OTLP (Traces -> Tempo Cloud)
+    // 5. RECEIVER OTLP (Traces -> Tempo Cloud)
     // ------------------------------------------------------------------------
     otelcol.receiver.otlp "default" {
       http {
@@ -200,6 +251,7 @@ data:
         traces = [otelcol.exporter.otlphttp.tempo_cloud.input]
       }
     }
+
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -226,6 +278,8 @@ spec:
             - --storage.path=/var/lib/alloy/data
             - /etc/alloy/config.alloy
           ports:
+            - containerPort: 9999
+              name: loki-push
             - containerPort: 12345
               name: http-metrics
             - containerPort: 4317
@@ -262,6 +316,9 @@ spec:
   selector:
     app: grafana-alloy
   ports:
+    - port: 9999
+      targetPort: 9999
+      name: loki-push
     - port: 12345
       targetPort: 12345
       nodePort: 31234

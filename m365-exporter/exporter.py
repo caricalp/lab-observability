@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import json
 import logging
 import csv
 import io
@@ -25,10 +26,12 @@ SCRAPE_INTERVAL = int(os.environ.get("SCRAPE_INTERVAL", "30"))
 EXPORTER_PORT = int(os.environ.get("EXPORTER_PORT", "9115"))
 MAX_CATCHUP_HOURS = float(os.environ.get("O365_MAX_CATCHUP_HOURS", "2.0"))
 OVERLAP_MINUTES = int(os.environ.get("OVERLAP_MINUTES", "10"))
-LOKI_ENDPOINT = os.environ.get("LOKI_ENDPOINT", "http://loki.logging.svc.cluster.local:3100/loki/api/v1/push")
+
+ALLOY_LOKI_ENDPOINT = os.environ.get("ALLOY_LOKI_ENDPOINT", "http://grafana-alloy.observability.svc.cluster.local:9999/loki/api/v1/push")
+LOKI_LOCAL_ENDPOINT = os.environ.get("LOKI_LOCAL_ENDPOINT", "http://loki.logging.svc.cluster.local:3100/loki/api/v1/push")
 
 # ==============================================================================
-# DEFINIÇÃO DAS MÉTRICAS PROMETHEUS (ESPECIFICAÇÃO EXATA DO M365)
+# DEFINIÇÃO DAS MÉTRICAS PROMETHEUS
 # ==============================================================================
 
 METRIC_COLLECTOR_SUCCESS = Gauge(
@@ -59,6 +62,11 @@ METRIC_AUDIT_EVENTS_TOTAL = Counter(
     "m365_audit_events_total",
     "Total acumulado de eventos de auditoria processados",
     ["operation", "result_status"]
+)
+METRIC_LOGINS_BY_COUNTRY = Counter(
+    "m365_identity_logins_by_country_total",
+    "Total acumulado de acessos por pais",
+    ["country", "operation", "result_status"]
 )
 
 # Métricas de E-mail
@@ -137,7 +145,7 @@ def get_auth_token():
 def send_events_to_loki(events, content_type="Audit.AzureActiveDirectory"):
     if not events:
         return 0
-    streams = []
+
     values = []
     for ev in events:
         c_time = ev.get("CreationTime")
@@ -150,7 +158,8 @@ def send_events_to_loki(events, content_type="Audit.AzureActiveDirectory"):
         else:
             ns = int(time.time() * 1e9)
         
-        line = str(ev)
+        # Garante JSON estrito válido (RFC 8259) com campos Country, Latitude, Longitude, Operation, etc.
+        line = json.dumps(ev, ensure_ascii=False)
         values.append([str(ns), line])
 
     payload = {
@@ -166,10 +175,22 @@ def send_events_to_loki(events, content_type="Audit.AzureActiveDirectory"):
             }
         ]
     }
+
+    # 1. Envia via Grafana Alloy (Receiver loki.source.api porta 9999 -> Loki Cloud)
+    sucesso = False
     try:
-        requests.post(LOKI_ENDPOINT, json=payload, timeout=5)
+        r = requests.post(ALLOY_LOKI_ENDPOINT, json=payload, timeout=5)
+        if r.status_code in [200, 204]:
+            sucesso = True
     except Exception:
         pass
+
+    # 2. Envia também para o Loki Local
+    try:
+        requests.post(LOKI_LOCAL_ENDPOINT, json=payload, timeout=5)
+    except Exception:
+        pass
+
     return len(events)
 
 def run_coletor_auditoria(token):
@@ -258,9 +279,13 @@ def run_coletor_auditoria(token):
                 for ev in eventos:
                     op = ev.get("Operation", "Unknown")
                     st = ev.get("ResultStatus", "Unknown")
+                    country = ev.get("Country", "Unknown")
                     METRIC_AUDIT_EVENTS_TOTAL.labels(operation=op, result_status=st).inc()
+                    METRIC_LOGINS_BY_COUNTRY.labels(country=country, operation=op, result_status=st).inc()
+                    # Também emite log stdout estruturado
+                    logger.info(f"[AUDIT] Operation={op} Status={st} Country={country} Lat={ev.get('Latitude')} Lon={ev.get('Longitude')} User={ev.get('UserId')} IP={ev.get('ClientIP')}")
         except Exception as e:
-            logger.warning(f"Erro ao baixar blob {c_id}: {e}")
+            logger.warning(f"Erro ao processar blob {c_id}: {e}")
             falhou = True
 
     if len(blobs_na_janela) == 0 and not falhou:
