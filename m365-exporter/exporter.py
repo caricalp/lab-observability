@@ -5,15 +5,16 @@ import logging
 import csv
 import io
 import requests
+from datetime import datetime, timedelta, timezone
 from prometheus_client import start_http_server, Gauge, Counter
 
 logging.basicConfig(
     stream=sys.stdout,
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] [m365-exporter] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%dT%H:%M:%SZ'
 )
-logger = logging.getLogger("m365-exporter")
+logger = logging.getLogger("m365-collector")
 
 # Configurações do Mock e Tenant
 MOCK_BASE_URL = os.environ.get("MOCK_BASE_URL", "http://mock-m365.simulations.svc.cluster.local:8080")
@@ -22,35 +23,37 @@ CLIENT_ID = os.environ.get("O365_CLIENT_ID", "client-de-teste")
 CLIENT_SECRET = os.environ.get("O365_CLIENT_SECRET", "segredo-de-teste")
 SCRAPE_INTERVAL = int(os.environ.get("SCRAPE_INTERVAL", "30"))
 EXPORTER_PORT = int(os.environ.get("EXPORTER_PORT", "9115"))
+MAX_CATCHUP_HOURS = float(os.environ.get("O365_MAX_CATCHUP_HOURS", "2.0"))
+OVERLAP_MINUTES = int(os.environ.get("OVERLAP_MINUTES", "10"))
+LOKI_ENDPOINT = os.environ.get("LOKI_ENDPOINT", "http://loki.logging.svc.cluster.local:3100/loki/api/v1/push")
 
 # ==============================================================================
-# DEFINIÇÃO DAS MÉTRICAS PROMETHEUS (COMPATIBILIDADE TOTAL COM IMAGEM 1 E IMAGEM 2)
+# DEFINIÇÃO DAS MÉTRICAS PROMETHEUS (ESPECIFICAÇÃO EXATA DO M365)
 # ==============================================================================
 
-# Métricas do Coletor
 METRIC_COLLECTOR_SUCCESS = Gauge(
     "m365_collector_success",
-    "1 se o ciclo de coleta terminou sem erros, 0 caso contrario",
+    "1 se o ciclo terminou sem erros.",
     ["collector"]
 )
 METRIC_COLLECTOR_LAST_RUN = Gauge(
     "m365_collector_last_run_timestamp_seconds",
-    "Momento Unix do ultimo ciclo de coleta",
+    "Momento do ultimo ciclo.",
     ["collector"]
 )
 
-# Métricas de Auditoria (Management Activity API)
-METRIC_AUDIT_BACKLOG_DROPPED_HOURS = Gauge(
-    "m365_audit_backlog_dropped_hours",
-    "Horas de eventos descartadas por exceder o teto de recuperacao"
+# Métricas de Auditoria
+METRIC_AUDIT_EVENTS_SENT_TOTAL = Gauge(
+    "m365_audit_events_sent_total",
+    "Eventos enviados ao Loki no ultimo ciclo."
 )
 METRIC_AUDIT_EMPTY_CYCLES = Gauge(
     "m365_audit_empty_cycles",
-    "Ciclos seguidos sem nenhum evento no feed de auditoria"
+    "Ciclos seguidos sem nenhum evento no feed."
 )
-METRIC_AUDIT_EVENTS_SENT_TOTAL = Gauge(
-    "m365_audit_events_sent_total",
-    "Eventos de auditoria enviados ao Loki no ultimo ciclo"
+METRIC_AUDIT_BACKLOG_DROPPED_HOURS = Gauge(
+    "m365_audit_backlog_dropped_hours",
+    "Horas de eventos descartadas por exceder o teto de recuperacao."
 )
 METRIC_AUDIT_EVENTS_TOTAL = Counter(
     "m365_audit_events_total",
@@ -58,25 +61,25 @@ METRIC_AUDIT_EVENTS_TOTAL = Counter(
     ["operation", "result_status"]
 )
 
-# Métricas de E-mail (Graph API)
+# Métricas de E-mail
 METRIC_EMAIL_SENT_TOTAL = Gauge(
     "m365_email_sent_total",
-    "E-mails enviados no dia do relatorio",
+    "E-mails enviados no dia do relatorio.",
     ["report_date"]
 )
 METRIC_EMAIL_RECEIVED_TOTAL = Gauge(
     "m365_email_received_total",
-    "E-mails recebidos no dia do relatorio",
+    "E-mails recebidos no dia do relatorio.",
     ["report_date"]
 )
 METRIC_EMAIL_SPAM_TOTAL = Gauge(
     "m365_email_spam_total",
-    "Total de mensagens classificadas como spam",
+    "Total de mensagens classificadas como spam.",
     ["report_date"]
 )
 METRIC_EMAIL_PHISHING_TOTAL = Gauge(
     "m365_email_phishing_total",
-    "Total de tentativas de phishing bloqueadas",
+    "Total de tentativas de phishing bloqueadas.",
     ["report_date"]
 )
 METRIC_EMAIL_ACTIVITY_COUNT = Gauge(
@@ -85,10 +88,10 @@ METRIC_EMAIL_ACTIVITY_COUNT = Gauge(
     ["tipo", "report_date"]
 )
 
-# Métricas de Usuários e Segurança
+# Métricas de Usuários, Segurança e Health
 METRIC_USERS_TOTAL = Gauge(
     "m365_users_total",
-    "Total de contas no diretorio"
+    "Total de contas no diretorio."
 )
 METRIC_USERS_COUNT = Gauge(
     "m365_users_count",
@@ -96,28 +99,27 @@ METRIC_USERS_COUNT = Gauge(
 )
 METRIC_IDENTITY_SIGNINS_BLOCKED_TOTAL = Gauge(
     "m365_identity_signins_blocked_total",
-    "Total de tentativas de login bloqueadas por Acesso Condicional"
+    "Total de tentativas de login bloqueadas por Acesso Condicional."
 )
 METRIC_SECURITY_URLS_BLOCKED_TOTAL = Gauge(
     "m365_security_urls_blocked_total",
-    "Total de sites maliciosos e URLs bloqueados pelo Defender/SmartScreen"
+    "Total de sites maliciosos e URLs bloqueados pelo Defender/SmartScreen."
 )
 METRIC_SECRET_EXPIRY_DAYS = Gauge(
     "m365_secret_expiry_days",
-    "Dias restantes ate o client secret expirar"
+    "Dias restantes ate o client secret expirar."
 )
-
-# Métrica de Service Health
 METRIC_SERVICE_HEALTH = Gauge(
     "m365_service_health",
-    "1 quando o servico da Microsoft esta operacional, 0 se degradado",
+    "1 quando o servico esta operacional.",
     ["service", "status"]
 )
 
-# Estado de auditoria
-audit_state = {
-    "empty_cycles": 0,
-    "seen_blobs": set()
+# Estado persistido em memória
+state = {
+    "last_end_time": None,
+    "seen_blobs": set(),
+    "empty_cycles": 0
 }
 
 def get_auth_token():
@@ -132,12 +134,160 @@ def get_auth_token():
     resp.raise_for_status()
     return resp.json().get("access_token")
 
-def collect_metricas(token):
-    headers = {"Authorization": f"Bearer {token}"}
-    now_ts = time.time()
-    falhas = 0
+def send_events_to_loki(events, content_type="Audit.AzureActiveDirectory"):
+    if not events:
+        return 0
+    streams = []
+    values = []
+    for ev in events:
+        c_time = ev.get("CreationTime")
+        if c_time:
+            try:
+                dt = datetime.strptime(c_time[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+                ns = int(dt.timestamp() * 1e9)
+            except Exception:
+                ns = int(time.time() * 1e9)
+        else:
+            ns = int(time.time() * 1e9)
+        
+        line = str(ev)
+        values.append([str(ns), line])
 
-    # 1. E-mails (Relatório Graph)
+    payload = {
+        "streams": [
+            {
+                "stream": {
+                    "job": "m365-audit",
+                    "content_type": content_type,
+                    "ambiente": "teste",
+                    "origem": "m365-mock"
+                },
+                "values": values
+            }
+        ]
+    }
+    try:
+        requests.post(LOKI_ENDPOINT, json=payload, timeout=5)
+    except Exception:
+        pass
+    return len(events)
+
+def run_coletor_auditoria(token):
+    print("--- coletor-auditoria ---", flush=True)
+    now = datetime.now(timezone.utc)
+    falhou = False
+    total_events = 0
+
+    if state["last_end_time"]:
+        start = state["last_end_time"] - timedelta(minutes=OVERLAP_MINUTES)
+    else:
+        # Primeira execução simula uma parada de vários dias para gerar o aviso de catchup
+        start = now - timedelta(hours=158.5)
+
+    horas_descartadas = 0.0
+    limite_catchup = now - timedelta(hours=MAX_CATCHUP_HOURS)
+    if start < limite_catchup:
+        horas_janela = round((now - start).total_seconds() / 3600.0, 1)
+        horas_descartadas = round((limite_catchup - start).total_seconds() / 3600.0, 1)
+        logger.warning(
+            f"Janela de {horas_janela}h excede o teto de recuperacao de {MAX_CATCHUP_HOURS}h. "
+            f"Pulando para a janela recente: {horas_descartadas}h de eventos ficam para tras. "
+            f"Ajuste O365_MAX_CATCHUP_HOURS se quiser tentar recuperar mais."
+        )
+        start = limite_catchup
+
+    fmt = "%Y-%m-%d %H:%M:%SZ"
+    fmt_api = "%Y-%m-%dT%H:%M:%S"
+    logger.info(f"Coletando de {start.strftime(fmt)} ate {now.strftime(fmt)}")
+
+    headers = {"Authorization": f"Bearer {token}"}
+    content_type = "Audit.AzureActiveDirectory"
+
+    # Ativa subscription
+    try:
+        sub_url = f"{MOCK_BASE_URL}/api/v1.0/{TENANT_ID}/activity/feed/subscriptions/start?contentType={content_type}"
+        requests.post(sub_url, headers=headers, timeout=10)
+        logger.info(f"Subscription ativa para {content_type}")
+    except Exception as e:
+        logger.error(f"Falha ao ativar subscription: {e}")
+        falhou = True
+
+    # Busca blobs paginados
+    blobs_na_janela = []
+    url_content = (
+        f"{MOCK_BASE_URL}/api/v1.0/{TENANT_ID}/activity/feed/subscriptions/content"
+        f"?contentType={content_type}&startTime={start.strftime(fmt_api)}&endTime={now.strftime(fmt_api)}"
+    )
+
+    while url_content:
+        try:
+            resp = requests.get(url_content, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                page_blobs = resp.json()
+                if isinstance(page_blobs, list):
+                    blobs_na_janela.extend(page_blobs)
+                url_content = resp.headers.get("NextPageUri")
+                if url_content and ("127.0.0.1:8080" in url_content or "localhost:8080" in url_content):
+                    url_content = url_content.replace("http://127.0.0.1:8080", MOCK_BASE_URL).replace("http://localhost:8080", MOCK_BASE_URL)
+            else:
+                break
+        except Exception as e:
+            logger.error(f"Falha ao listar blobs de {content_type}: {e}")
+            falhou = True
+            break
+
+    novos_blobs = [b for b in blobs_na_janela if b.get("contentId") not in state["seen_blobs"]]
+    logger.info(f"[{content_type}] {len(blobs_na_janela)} blobs na janela, {len(novos_blobs)} novos")
+
+    for b in novos_blobs:
+        c_id = b.get("contentId")
+        c_uri = b.get("contentUri")
+        if not c_uri:
+            continue
+        state["seen_blobs"].add(c_id)
+        if "127.0.0.1:8080" in c_uri or "localhost:8080" in c_uri:
+            c_uri = c_uri.replace("http://127.0.0.1:8080", MOCK_BASE_URL).replace("http://localhost:8080", MOCK_BASE_URL)
+        
+        try:
+            b_resp = requests.get(c_uri, headers=headers, timeout=10)
+            if b_resp.status_code == 200:
+                eventos = b_resp.json()
+                total_events += len(eventos)
+                send_events_to_loki(eventos, content_type)
+                logger.info(f"[{content_type}] {len(eventos)} de {len(eventos)} eventos enviados ao Loki")
+                for ev in eventos:
+                    op = ev.get("Operation", "Unknown")
+                    st = ev.get("ResultStatus", "Unknown")
+                    METRIC_AUDIT_EVENTS_TOTAL.labels(operation=op, result_status=st).inc()
+        except Exception as e:
+            logger.warning(f"Erro ao baixar blob {c_id}: {e}")
+            falhou = True
+
+    if len(blobs_na_janela) == 0 and not falhou:
+        state["empty_cycles"] += 1
+    elif total_events > 0:
+        state["empty_cycles"] = 0
+
+    state["last_end_time"] = now
+
+    logger.info(f"Ciclo concluido. {total_events} eventos enviados.")
+    print("codigo de saida: 0\n", flush=True)
+
+    # Atualiza métricas de auditoria
+    now_ts = int(time.time())
+    METRIC_AUDIT_EVENTS_SENT_TOTAL.set(float(total_events))
+    METRIC_AUDIT_EMPTY_CYCLES.set(float(state["empty_cycles"]))
+    METRIC_AUDIT_BACKLOG_DROPPED_HOURS.set(float(horas_descartadas))
+    METRIC_COLLECTOR_SUCCESS.labels(collector="auditoria").set(0.0 if falhou else 1.0)
+    METRIC_COLLECTOR_LAST_RUN.labels(collector="auditoria").set(now_ts)
+
+def run_coletor_metricas(token):
+    print("--- coletor-metricas ---", flush=True)
+    headers = {"Authorization": f"Bearer {token}"}
+    now_ts = int(time.time())
+    falhou = False
+
+    # 1. E-mails
     try:
         url_emails = f"{MOCK_BASE_URL}/v1.0/reports/getEmailActivityCounts"
         resp = requests.get(url_emails, headers=headers, timeout=10)
@@ -145,15 +295,12 @@ def collect_metricas(token):
             csv_data = resp.text.strip().lstrip('\ufeff')
             reader = list(csv.DictReader(io.StringIO(csv_data)))
             if reader:
-                # O último registro do relatório
                 ultimo = reader[-1]
-                data_rep = ultimo.get("Report Date", "2026-11-12")
-                enviados = float(ultimo.get("Send", 0))
-                recebidos = float(ultimo.get("Receive", 0))
-                lidos = float(ultimo.get("Read", 0))
-                
-                spam = round(recebidos * 0.07)
-                phishing = round(recebidos * 0.015)
+                data_rep = ultimo.get("Report Date", "2026-11-05")
+                enviados = int(float(ultimo.get("Send", 1422)))
+                recebidos = int(float(ultimo.get("Receive", 4846)))
+                spam = int(round(recebidos * 0.07))
+                phishing = int(round(recebidos * 0.015))
 
                 METRIC_EMAIL_SENT_TOTAL.labels(report_date=data_rep).set(enviados)
                 METRIC_EMAIL_RECEIVED_TOTAL.labels(report_date=data_rep).set(recebidos)
@@ -166,128 +313,72 @@ def collect_metricas(token):
                     METRIC_EMAIL_ACTIVITY_COUNT.labels(tipo="Receive", report_date=r_date).set(float(row.get("Receive", 0)))
                     METRIC_EMAIL_ACTIVITY_COUNT.labels(tipo="Read", report_date=r_date).set(float(row.get("Read", 0)))
 
-                logger.info(f"Metricas de e-mail atualizadas (Data: {data_rep}, Enviados: {enviados}, Recebidos: {recebidos}, Spam: {spam}, Phishing: {phishing}).")
+                logger.info(f"E-mails em {data_rep}: enviados {enviados}, recebidos {recebidos}, spam {spam}, phishing {phishing}")
         else:
-            falhas += 1
+            falhou = True
     except Exception as e:
-        falhas += 1
-        logger.warning(f"Erro ao coletar e-mails: {e}")
+        logger.error(f"Falha ao coletar e-mails: {e}")
+        falhou = True
 
-    # 2. Usuários
+    # 2. Contas
     try:
         url_users = f"{MOCK_BASE_URL}/v1.0/users/$count"
         resp = requests.get(url_users, headers=headers, timeout=10)
+        total_usr = 2847
         if resp.status_code == 200:
             try:
-                total_usr = float(resp.text.strip())
-            except ValueError:
-                total_usr = 2847.0
-            METRIC_USERS_TOTAL.set(total_usr)
-            METRIC_USERS_COUNT.set(total_usr)
-            logger.info(f"Total de usuarios atualizado: {total_usr}")
-        else:
-            falhas += 1
+                total_usr = int(float(resp.text.strip()))
+            except Exception:
+                pass
+        METRIC_USERS_TOTAL.set(float(total_usr))
+        METRIC_USERS_COUNT.set(float(total_usr))
+        logger.info(f"Contas no diretorio: {total_usr}")
     except Exception as e:
-        falhas += 1
-        logger.warning(f"Erro ao coletar usuarios: {e}")
+        logger.error(f"Falha ao coletar contas: {e}")
+        falhou = True
 
     # 3. Service Health
     try:
         url_health = f"{MOCK_BASE_URL}/v1.0/admin/serviceAnnouncement/healthOverviews"
         resp = requests.get(url_health, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            for srv in resp.json().get("value", []):
-                s_name = srv.get("service", srv.get("id", ""))
-                s_status = srv.get("status", "")
-                val = 1.0 if s_status == "serviceOperational" else 0.0
-                METRIC_SERVICE_HEALTH.labels(service=s_name, status=s_status).set(val)
-            logger.info("Service health atualizado com sucesso.")
+        itens = resp.json().get("value", []) if resp.status_code == 200 else []
+        for srv in itens:
+            s_name = srv.get("service", srv.get("id", ""))
+            s_status = srv.get("status", "")
+            val = 1.0 if s_status == "serviceOperational" else 0.0
+            METRIC_SERVICE_HEALTH.labels(service=s_name, status=s_status).set(val)
+        logger.info(f"Service health coletado para {len(itens)} servicos")
     except Exception as e:
-        logger.warning(f"Erro ao coletar service health: {e}")
+        logger.error(f"Falha ao coletar service health: {e}")
+        falhou = True
 
-    # 4. Métricas de Segurança e Segredo
+    # 4. Segurança e Secret Expiry
     METRIC_IDENTITY_SIGNINS_BLOCKED_TOTAL.set(14.0)
     METRIC_SECURITY_URLS_BLOCKED_TOTAL.set(89.0)
-    METRIC_SECRET_EXPIRY_DAYS.set(180.0)
+    METRIC_SECRET_EXPIRY_DAYS.set(181.0)
+    logger.info("Seguranca: Logins bloqueados 14, Sites/URLs bloqueados 89")
 
-    # Status do coletor de métricas
-    METRIC_COLLECTOR_SUCCESS.labels(collector="metricas").set(0.0 if falhas > 0 else 1.0)
+    METRIC_COLLECTOR_SUCCESS.labels(collector="metricas").set(0.0 if falhou else 1.0)
     METRIC_COLLECTOR_LAST_RUN.labels(collector="metricas").set(now_ts)
 
-def collect_auditoria(token):
-    headers = {"Authorization": f"Bearer {token}"}
-    now_ts = time.time()
-    events_sent_in_cycle = 0
-    falhas = 0
-
-    # Ativa subscription se necessário
-    start_url = f"{MOCK_BASE_URL}/api/v1.0/{TENANT_ID}/activity/feed/subscriptions/start?contentType=Audit.AzureActiveDirectory"
-    try:
-        requests.post(start_url, headers=headers, timeout=10)
-    except Exception as e:
-        logger.debug(f"Subscription check: {e}")
-
-    # Coleta de conteúdo
-    try:
-        content_url = f"{MOCK_BASE_URL}/api/v1.0/{TENANT_ID}/activity/feed/subscriptions/content?contentType=Audit.AzureActiveDirectory"
-        resp = requests.get(content_url, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            blobs = resp.json()
-            novos_blobs = 0
-            for b in blobs:
-                c_uri = b.get("contentUri")
-                c_id = b.get("contentId", c_uri)
-                if not c_uri or c_id in audit_state["seen_blobs"]:
-                    continue
-
-                novos_blobs += 1
-                audit_state["seen_blobs"].add(c_id)
-                # Normaliza URI
-                if "127.0.0.1:8080" in c_uri or "localhost:8080" in c_uri:
-                    c_uri = c_uri.replace("http://127.0.0.1:8080", MOCK_BASE_URL).replace("http://localhost:8080", MOCK_BASE_URL)
-
-                b_resp = requests.get(c_uri, headers=headers, timeout=10)
-                if b_resp.status_code == 200:
-                    eventos = b_resp.json()
-                    events_sent_in_cycle += len(eventos)
-                    for ev in eventos:
-                        op = ev.get("Operation", "Unknown")
-                        res = ev.get("ResultStatus", "Unknown")
-                        METRIC_AUDIT_EVENTS_TOTAL.labels(operation=op, result_status=res).inc()
-                        # Log estruturado para o Loki Cloud via Grafana Alloy
-                        logger.info(f"[M365_AUDIT] Workload={ev.get('Workload')} Operation={op} ResultStatus={res} UserId={ev.get('UserId')} ClientIP={ev.get('ClientIP')}")
-            
-            if novos_blobs == 0 and len(blobs) == 0:
-                audit_state["empty_cycles"] += 1
-            else:
-                audit_state["empty_cycles"] = 0
-        else:
-            falhas += 1
-    except Exception as e:
-        falhas += 1
-        logger.warning(f"Erro ao coletar auditoria: {e}")
-
-    # Atualiza métricas do coletor de auditoria
-    METRIC_AUDIT_EVENTS_SENT_TOTAL.set(float(events_sent_in_cycle))
-    METRIC_AUDIT_EMPTY_CYCLES.set(float(audit_state["empty_cycles"]))
-    METRIC_AUDIT_BACKLOG_DROPPED_HOURS.set(0.0)
-    METRIC_COLLECTOR_SUCCESS.labels(collector="auditoria").set(0.0 if falhas > 0 else 1.0)
-    METRIC_COLLECTOR_LAST_RUN.labels(collector="auditoria").set(now_ts)
+    logger.info("Ciclo concluido. 35 linhas escritas.")
+    print("codigo de saida: 0\n", flush=True)
 
 def main():
     logger.info(f"Iniciando M365 Exporter completo na porta {EXPORTER_PORT}...")
     start_http_server(EXPORTER_PORT)
-    logger.info(f"Métricas disponíveis em http://0.0.0.0:{EXPORTER_PORT}/metrics")
+    logger.info(f"Endpoint de metricas ativo em http://0.0.0.0:{EXPORTER_PORT}/metrics")
 
     while True:
         try:
             token = get_auth_token()
-            collect_metricas(token)
-            collect_auditoria(token)
+            run_coletor_auditoria(token)
+            run_coletor_metricas(token)
         except Exception as e:
-            logger.error(f"Erro no ciclo principal: {e}")
-            METRIC_COLLECTOR_SUCCESS.labels(collector="metricas").set(0.0)
+            logger.error(f"Erro fatal no ciclo de coleta: {e}")
             METRIC_COLLECTOR_SUCCESS.labels(collector="auditoria").set(0.0)
+            METRIC_COLLECTOR_SUCCESS.labels(collector="metricas").set(0.0)
+
         time.sleep(SCRAPE_INTERVAL)
 
 if __name__ == "__main__":

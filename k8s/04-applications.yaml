@@ -74,7 +74,7 @@ spec:
           image: local/akamai-exporter:latest
           imagePullPolicy: Never
           env:
-            - name: AKAMAI_HOST
+            - name: MOCK_URL
               value: "http://mock-akamai.simulations.svc.cluster.local:8080"
             - name: CLIENT_TOKEN
               value: "akab-client-token-xxx"
