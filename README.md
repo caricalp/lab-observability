@@ -31,7 +31,8 @@ K3S CLUSTER
     │
     ├── NAMESPACE: applications
     │   ├── Pod: api-flask          (Porta 5000 / NodePort 30500)
-    │   └── Pod: api-coleta         (Akamai Exporter - Porta 9110 / NodePort 30911)
+    │   ├── Pod: api-coleta         (Akamai Exporter - Porta 9110 / NodePort 30911)
+    │   └── Pod: api-coleta-m365    (M365 Exporter - Porta 9115 / NodePort 30915)
     │
     └── NAMESPACE: simulations
         ├── Pod: mock-akamai        (Simulação Akamai - Porta 8080)
@@ -55,6 +56,7 @@ K3S CLUSTER
 | **observability**| `grafana-alloy`| `grafana/alloy:v1.3.0` | Pipeline de telemetria para Grafana Cloud | `http://<IP_HOST>:31234` |
 | **applications** | `api-flask` | `local/api-flask:latest` | Microsserviço com rotas e métricas | `http://<IP_HOST>:30500` |
 | **applications** | `api-coleta` | `local/akamai-exporter:latest` | Coletor de telemetria Akamai | `http://<IP_HOST>:30911` |
+| **applications** | `api-coleta-m365` | `local/m365-exporter:latest` | Coletor de telemetria e logs M365 | `http://<IP_HOST>:30915` |
 | **simulations** | `mock-akamai` | `local/mock-akamai:latest` | Mock de CDN & Data Traffic Akamai | ClusterIP interno |
 | **simulations** | `mock-m365` | `local/mock-m365:latest` | Mock de APIs Graph e O365 Audit | ClusterIP interno |
 | **simulations** | `traffic-generator`| `local/traffic-generator:latest` | Gerador contínuo de carga e picos | Worker contínuo |
@@ -70,10 +72,11 @@ lab-cloud/
 │   ├── 01-database.yaml             # PostgreSQL com PVC dedicado e pgAdmin
 │   ├── 02-logging.yaml              # Grafana Loki com PVC e ConfigMap
 │   ├── 03-simulations.yaml          # Mocks Akamai, M365 e Traffic Generator
-│   ├── 04-applications.yaml         # API Flask instrumentada e API Coleta
+│   ├── 04-applications.yaml         # API Flask, Akamai Exporter e M365 Exporter
 │   ├── 05-monitoring.yaml           # Prometheus, Grafana e Zabbix (Server + Web)
 │   └── 06-observability-alloy.yaml  # DaemonSet Grafana Alloy com RBAC para k8s
 ├── app/                             # Código-fonte da Custom API Flask
+├── m365-exporter/                   # Coletor nativo de métricas e auditoria do M365
 ├── traffic-generator/               # Código-fonte do gerador de carga e spikes
 ├── k6/                              # Scripts de teste de carga K6
 └── README.md                        # Documentação da arquitetura e operação
@@ -120,6 +123,10 @@ kubectl get pods -A
 - **Métricas do Akamai Exporter:**
   ```bash
   curl http://<IP_HOST>:30911/metrics
+  ```
+- **Métricas do Microsoft 365 Exporter:**
+  ```bash
+  curl http://<IP_HOST>:30915/metrics
   ```
 - **Painel de Controle do Grafana Alloy:**
   Acesse `http://<IP_HOST>:31234` para visualizar o grafo de componentes vivos do Alloy.

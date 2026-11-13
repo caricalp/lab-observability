@@ -26,18 +26,18 @@ spec:
               value: "zabbix"
             - name: DB_USER
               value: "zabbix"
-            - name: DB_PASSWORD
-              value: "@Carica98"
+            - name: DB_PASS
+              value: "zabbix_pwd"
           ports:
             - containerPort: 5000
-              name: http
           resources:
-            limits:
-              cpu: "250m"
-              memory: "128Mi"
             requests:
-              cpu: "100m"
-              memory: "64Mi"
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
 ---
 apiVersion: v1
 kind: Service
@@ -52,7 +52,7 @@ spec:
     - port: 5000
       targetPort: 5000
       nodePort: 30500
-      name: http
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -74,15 +74,28 @@ spec:
           image: local/akamai-exporter:latest
           imagePullPolicy: Never
           env:
-            - name: MOCK_URL
+            - name: AKAMAI_HOST
               value: "http://mock-akamai.simulations.svc.cluster.local:8080"
-            - name: EDGERC_PATH
-              value: "/etc/akamai/.edgerc"
-            - name: PORTA_EXPORTER
+            - name: CLIENT_TOKEN
+              value: "akab-client-token-xxx"
+            - name: CLIENT_SECRET
+              value: "akab-client-secret-xxx"
+            - name: ACCESS_TOKEN
+              value: "akab-access-token-xxx"
+            - name: PORT
               value: "9110"
+            - name: SCRAPE_INTERVAL
+              value: "30"
           ports:
             - containerPort: 9110
-              name: metrics
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+
 ---
 apiVersion: v1
 kind: Service
@@ -97,4 +110,61 @@ spec:
     - port: 9110
       targetPort: 9110
       nodePort: 30911
-      name: metrics
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-coleta-m365
+  namespace: applications
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-coleta-m365
+  template:
+    metadata:
+      labels:
+        app: api-coleta-m365
+    spec:
+      containers:
+        - name: m365-exporter
+          image: local/m365-exporter:latest
+          imagePullPolicy: Never
+          env:
+            - name: MOCK_BASE_URL
+              value: "http://mock-m365.simulations.svc.cluster.local:8080"
+            - name: O365_TENANT_ID
+              value: "tenant-de-teste"
+            - name: O365_CLIENT_ID
+              value: "client-de-teste"
+            - name: O365_CLIENT_SECRET
+              value: "segredo-de-teste"
+            - name: SCRAPE_INTERVAL
+              value: "30"
+            - name: EXPORTER_PORT
+              value: "9115"
+          ports:
+            - containerPort: 9115
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-coleta-m365
+  namespace: applications
+spec:
+  type: NodePort
+  selector:
+    app: api-coleta-m365
+  ports:
+    - port: 9115
+      targetPort: 9115
+      nodePort: 30915

@@ -110,6 +110,20 @@ data:
       scrape_interval = "15s"
     }
 
+    // Exporter M365 (api-coleta-m365)
+    prometheus.scrape "api_coleta_m365" {
+      targets = [
+        {
+          "__address__" = "api-coleta-m365.applications.svc.cluster.local:9115",
+          "job"         = "m365-exporter",
+          "namespace"   = "applications",
+          "env"         = "k3s-lab",
+        },
+      ]
+      forward_to      = [prometheus.remote_write.cloud.receiver]
+      scrape_interval = "15s"
+    }
+
     // Prometheus Local (Monitoring)
     prometheus.scrape "k3s_prometheus" {
       targets = [
