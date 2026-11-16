@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: antigravity-exporter
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: antigravity-exporter
+  template:
+    metadata:
+      labels:
+        app: antigravity-exporter
+    spec:
+      containers:
+        - name: antigravity-exporter
+          image: local/antigravity-exporter:latest
+          imagePullPolicy: Never
+          env:
+            - name: ALLOY_OTLP_URL
+              value: "http://grafana-alloy.observability.svc.cluster.local:4318/v1/metrics"
+            - name: EXPORTER_PORT
+              value: "9125"
+            - name: GEMINI_DIR
+              value: "/root/.gemini"
+            - name: SCRAPE_INTERVAL
+              value: "15"
+          ports:
+            - containerPort: 9125
+              name: metrics
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: gemini-data
+              mountPath: /root/.gemini
+              readOnly: true
+      volumes:
+        - name: gemini-data
+          hostPath:
+            path: /root/.gemini
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: antigravity-exporter
+  namespace: observability
+spec:
+  type: NodePort
+  selector:
+    app: antigravity-exporter
+  ports:
+    - port: 9125
+      targetPort: 9125
+      nodePort: 30925
+      name: http-metrics

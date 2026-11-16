@@ -42,15 +42,11 @@ data:
   config.alloy: |
     // ========================================================================
     // Grafana Alloy - Cluster K3s -> Grafana Cloud (caiqueferreira)
-    // Pipeline otimizada: Logs (Loki Cloud) & Traces (Tempo Cloud)
-    // * As métricas agora são consultadas pelo Grafana Cloud diretamente no
-    //   Prometheus local (http://prometheus.monitoring.svc.cluster.local:9090)
-    //   via Grafana Private Data Source Connect (PDC), economizando 100% da
-    //   cota de Remote Write!
+    // Pipeline: OTLP Gateway (Métricas, Logs, Traces) + Loki Cloud
     // ========================================================================
 
     // ------------------------------------------------------------------------
-    // 1. EXPORTADORES CLOUD (Loki & Tempo)
+    // 1. EXPORTADORES CLOUD (Loki & OTLP Gateway)
     // ------------------------------------------------------------------------
     loki.write "cloud" {
       endpoint {
@@ -62,16 +58,17 @@ data:
       }
     }
 
-    otelcol.exporter.otlphttp "tempo_cloud" {
-      client {
-        endpoint = "https://tempo-prod-17-prod-sa-east-1.grafana.net/tempo"
-        auth     = otelcol.auth.basic.tempo.handler
-      }
-    }
-
-    otelcol.auth.basic "tempo" {
+    // Exportador OTLP Gateway oficial do Grafana Cloud
+    otelcol.auth.basic "grafana_cloud_otlp" {
       username = "<GRAFANA_CLOUD_USER_ID>"
       password = "<GRAFANA_CLOUD_API_TOKEN>"
+    }
+
+    otelcol.exporter.otlphttp "grafana_cloud_otlp" {
+      client {
+        endpoint = "https://otlp-gateway-prod-sa-east-1.grafana.net/otlp"
+        auth     = otelcol.auth.basic.grafana_cloud_otlp.handler
+      }
     }
 
     // ------------------------------------------------------------------------
@@ -173,7 +170,7 @@ data:
     }
 
     // ------------------------------------------------------------------------
-    // 4. RECEIVER OTLP (Traces -> Tempo Cloud)
+    // 4. RECEIVER OTLP UNIFICADO (Métricas, Traces e Logs -> OTLP Gateway Cloud)
     // ------------------------------------------------------------------------
     otelcol.receiver.otlp "default" {
       http {
@@ -183,7 +180,9 @@ data:
         endpoint = "0.0.0.0:4317"
       }
       output {
-        traces = [otelcol.exporter.otlphttp.tempo_cloud.input]
+        metrics = [otelcol.exporter.otlphttp.grafana_cloud_otlp.input]
+        logs    = [otelcol.exporter.otlphttp.grafana_cloud_otlp.input]
+        traces  = [otelcol.exporter.otlphttp.grafana_cloud_otlp.input]
       }
     }
 

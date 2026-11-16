@@ -36,6 +36,9 @@ data:
       - job_name: 'api-coleta-m365'
         static_configs:
           - targets: ['api-coleta-m365.applications.svc.cluster.local:9115']
+      - job_name: 'antigravity-telemetry'
+        static_configs:
+          - targets: ['antigravity-exporter.observability.svc.cluster.local:9125']
 ---
 apiVersion: apps/v1
 kind: Deployment
