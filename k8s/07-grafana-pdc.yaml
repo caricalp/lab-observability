@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-pdc-agent
+  namespace: default
+type: Opaque
+stringData:
+  token: "<GRAFANA_PDC_TOKEN>"
+  cluster: "<GRAFANA_PDC_CLUSTER_SLUG>"
+  hosted-grafana-id: "<GRAFANA_HOSTED_ID>"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-pdc-agent
+  namespace: default
+  labels:
+    app: grafana-pdc-agent
+    name: grafana-pdc-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: grafana-pdc-agent
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        name: grafana-pdc-agent
+    spec:
+      containers:
+        - name: grafana-pdc-agent
+          image: grafana/pdc-agent:latest
+          imagePullPolicy: Always
+          args:
+            - -cluster
+            - $(CLUSTER)
+            - -token
+            - $(TOKEN)
+            - -gcloud-hosted-grafana-id
+            - $(HOSTED_GRAFANA_ID)
+          env:
+            - name: TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-pdc-agent
+                  key: token
+            - name: CLUSTER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-pdc-agent
+                  key: cluster
+            - name: HOSTED_GRAFANA_ID
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-pdc-agent
+                  key: hosted-grafana-id
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - all
+      securityContext:
+        runAsUser: 30000
+        runAsGroup: 30000
+        fsGroup: 30000

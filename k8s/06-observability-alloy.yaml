@@ -42,21 +42,16 @@ data:
   config.alloy: |
     // ========================================================================
     // Grafana Alloy - Cluster K3s -> Grafana Cloud (caiqueferreira)
+    // Pipeline otimizada: Logs (Loki Cloud) & Traces (Tempo Cloud)
+    // * As métricas agora são consultadas pelo Grafana Cloud diretamente no
+    //   Prometheus local (http://prometheus.monitoring.svc.cluster.local:9090)
+    //   via Grafana Private Data Source Connect (PDC), economizando 100% da
+    //   cota de Remote Write!
     // ========================================================================
 
     // ------------------------------------------------------------------------
-    // 1. EXPORTADORES CLOUD (Prometheus, Loki, Tempo)
+    // 1. EXPORTADORES CLOUD (Loki & Tempo)
     // ------------------------------------------------------------------------
-    prometheus.remote_write "cloud" {
-      endpoint {
-        url = "https://prometheus-prod-40-prod-sa-east-1.grafana.net/api/prom/push"
-        basic_auth {
-          username = "<GRAFANA_CLOUD_USER_ID>"
-          password = "<GRAFANA_CLOUD_API_TOKEN>"
-        }
-      }
-    }
-
     loki.write "cloud" {
       endpoint {
         url = "https://logs-prod-024.grafana.net/loki/api/v1/push"
@@ -80,67 +75,7 @@ data:
     }
 
     // ------------------------------------------------------------------------
-    // 2. SCRAPING PROMETHEUS
-    // ------------------------------------------------------------------------
-
-    // API Flask (Applications)
-    prometheus.scrape "api_flask" {
-      targets = [
-        {
-          "__address__" = "api-flask.applications.svc.cluster.local:5000",
-          "job"         = "api-flask",
-          "namespace"   = "applications",
-          "env"         = "k3s-lab",
-        },
-      ]
-      forward_to      = [prometheus.remote_write.cloud.receiver]
-      scrape_interval = "15s"
-    }
-
-    // Exporter Akamai (api-coleta)
-    prometheus.scrape "api_coleta" {
-      targets = [
-        {
-          "__address__" = "api-coleta.applications.svc.cluster.local:9110",
-          "job"         = "akamai-exporter",
-          "namespace"   = "applications",
-          "env"         = "k3s-lab",
-        },
-      ]
-      forward_to      = [prometheus.remote_write.cloud.receiver]
-      scrape_interval = "15s"
-    }
-
-    // Exporter M365 (api-coleta-m365)
-    prometheus.scrape "api_coleta_m365" {
-      targets = [
-        {
-          "__address__" = "api-coleta-m365.applications.svc.cluster.local:9115",
-          "job"         = "m365-exporter",
-          "namespace"   = "applications",
-          "env"         = "k3s-lab",
-        },
-      ]
-      forward_to      = [prometheus.remote_write.cloud.receiver]
-      scrape_interval = "15s"
-    }
-
-    // Prometheus Local (Monitoring)
-    prometheus.scrape "k3s_prometheus" {
-      targets = [
-        {
-          "__address__" = "prometheus.monitoring.svc.cluster.local:9090",
-          "job"         = "prometheus",
-          "namespace"   = "monitoring",
-          "env"         = "k3s-lab",
-        },
-      ]
-      forward_to      = [prometheus.remote_write.cloud.receiver]
-      scrape_interval = "30s"
-    }
-
-    // ------------------------------------------------------------------------
-    // 3. RECEIVER LOKI PUSH M365 (Office 365 Audit API)
+    // 2. RECEIVER LOKI PUSH M365 (Office 365 Audit API com Geolocalização)
     // ------------------------------------------------------------------------
     loki.source.api "m365_api" {
       http {
@@ -190,7 +125,7 @@ data:
     }
 
     // ------------------------------------------------------------------------
-    // 4. LOGS DE TODOS OS PODS DO KUBERNETES -> LOKI CLOUD
+    // 3. LOGS DE TODOS OS PODS DO KUBERNETES -> LOKI CLOUD
     // ------------------------------------------------------------------------
     discovery.kubernetes "pods" {
       role = "pod"
@@ -238,7 +173,7 @@ data:
     }
 
     // ------------------------------------------------------------------------
-    // 5. RECEIVER OTLP (Traces -> Tempo Cloud)
+    // 4. RECEIVER OTLP (Traces -> Tempo Cloud)
     // ------------------------------------------------------------------------
     otelcol.receiver.otlp "default" {
       http {
