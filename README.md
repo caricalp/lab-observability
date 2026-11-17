@@ -152,6 +152,18 @@ kubectl get pods -A
 
 ---
 
+
+---
+
+## 📦 Módulos Microsoft 365 (Versões Padrão e Atualização)
+
+O repositório disponibiliza a versão estável como padrão e a versão v2 como atualização opcional:
+
+| Módulo | Versão Padrão (Estável) | Versão Atualizada (v2) | Principais Recursos da v2 |
+| :--- | :--- | :--- | :--- |
+| **M365 Exporter** | `m365-exporter/exporter.py` | `m365-exporter/exporter_v2.py` | Suporte híbrido ao Microsoft Graph API (`/v1.0/auditLogs/signIns`), labels `city`, `lat`, `lon` e `error_code` para o Grafana Geomap e flag `USE_REAL_AZURE` para alternar direto para produção. |
+| **M365 Mock** | `m365-mock/app.py` | `m365-mock/app_v2.py` | Rota nativa do Entra ID com geração contínua de cidades globais, coordenadas geográficas e status de autenticação. |
+
 ## 🛡️ Boas Práticas e Segurança
 - Nenhum segredo ou credencial sensível é armazenado em código versionado (uso de Secrets e placeholders `<GRAFANA_PDC_TOKEN>`, `<GRAFANA_CLOUD_API_TOKEN>`).
 - Consultas externas da nuvem ocorrem exclusivamente através do canal criptografado do PDC, sem necessidade de expor o Prometheus na Internet pública.
